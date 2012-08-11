@@ -1,0 +1,248 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Voronoi Mandelbrot</title>
+    </head>
+<body>
+
+    <div>
+        <span id="point-counter">0</span> points in <span id="time">0</span> ms
+        (limit: <input id="limit" type="text" value="500"> ms) <input type="button" onclick="to_png()" value="open as PNG image"><br>
+        <small>drag to move; use your mouse wheel to zoom</small>
+
+    </div>
+    <canvas id="canvas" width="1050" height="600"></canvas>
+
+<script src="rhill-voronoi-core.js"></script>
+<script>
+
+/*
+ * Copyright 2012 by Richard Wossal <richard@r-wos.org>
+ * You can do anything you want to do with this source code,
+ * just don't blame me.
+ */
+
+// GLOBALS
+
+var C = el("canvas")
+var CTX = C.getContext("2d");
+var H = C.height;
+var W = C.width;
+
+var MAX_ITERATIONS = 10000;
+var POINTS_PER_RUN = 1;
+var POINTS = [];
+
+var SCALE = 1;
+var X_OFF = 0;
+var Y_OFF = 0;
+
+var RUNNING;
+
+// UTILS
+
+function el(e) { return document.getElementById(e); }
+function rand(from, to){
+    return Math.floor(Math.random() * (to - from + 1) + from);
+}
+function rainbow(i, max) {
+    // this is buggy but it doesn't matter
+    i = Math.round(i * (16777215.0/max));
+    var str_i = i.toString(16);
+    while (str_i.length < 6) {
+        str_i = '0' + str_i;
+    }
+    return '#' + str_i;
+}
+function clear() {
+    CTX.fillStyle = '#ffffff';
+    CTX.fillRect(0, 0, W, H);
+}
+function scale_x(x) {
+    return ((x / W) * 3.5 - 2.5) // in (-2.5, 1)
+           * SCALE - X_OFF;
+}
+function scale_y(y) {
+    return ((y / H) * 2 - 1) // in (-1, 1)
+           * SCALE - Y_OFF;
+}
+
+// COMPUTE POINTS
+
+function next_point() {
+    // rand point
+    var x = rand(0, W);
+    var y = rand(0, H);
+    // scale
+    var x_scaled = scale_x(x);
+    var y_scaled = scale_y(y);
+    // check range
+    if (x_scaled < -2.5 || x_scaled > 1 || y_scaled < -1 || y_scaled > 1) {
+        return false; // out of range (b/c of offset/zoom)
+    }
+    var mx = 0;
+    var my = 0;
+    var i  = 0;
+    var xtemp;
+    while ((mx*mx + my*my < 2*2) && (i < MAX_ITERATIONS)) {
+        xtemp = mx*mx - my*my + x_scaled;
+        my = 2*mx*my + y_scaled;
+        mx = xtemp;
+        i += 1;
+    }
+    return [x, y, i];
+}
+
+// RENDER POINTS
+
+function draw(points) {
+
+    var voronoi = new Voronoi();
+    var bbox = {xl:0, xr:W, yt:0, yb:H};
+    var vertices = [];
+    var colors = [];
+    var obj;
+    var i;
+    // gather points
+    for (i = 0; i < points.length; i++) {
+        obj = {x: points[i][0], y: points[i][1]};
+        // HACK - saving the colors (number of iterations)
+        colors[""+obj.x+","+obj.y] = points[i][2];
+        vertices.push(obj);
+    }
+    // make diagram
+    var diagram = voronoi.compute(vertices, bbox);
+    if (! diagram) {
+        return;
+    }
+    // draw voronoi diagram
+    var len = diagram.cells.length;
+    var cell, halfedges, v;
+    while (len--) {
+        cell = diagram.cells[len];
+        CTX.beginPath();
+        halfedges = cell.halfedges;
+        if (halfedges.length > 2) {
+            v = halfedges[0].getStartpoint();
+            CTX.beginPath();
+            CTX.moveTo(v.x, v.y);
+            for (i = 0; i < halfedges.length; i++) {
+                v = halfedges[i].getEndpoint();
+                CTX.lineTo(v.x, v.y);
+            }
+            // color lookup
+            CTX.fillStyle = rainbow(colors[""+cell.site.x+","+cell.site.y], MAX_ITERATIONS);
+            CTX.fill();
+        }
+    }
+}
+
+// MAIN LOOP
+
+function run() {
+    var start = (new Date).getTime();
+    for (var j = 0; j < POINTS_PER_RUN; j++) {
+        var res = next_point();
+        if (res) {
+            POINTS.push(res);
+        }
+    }
+    draw(POINTS);
+    if (POINTS_PER_RUN < 5000)
+        POINTS_PER_RUN *= 1.1;
+    var stop = (new Date).getTime();
+    el('point-counter').innerHTML = POINTS.length;
+    el('time').innerHTML = stop-start;
+    var limit = parseInt(el('limit').value);
+    if (stop-start > limit) {
+        return;
+    } 
+    RUNNING = setTimeout(run, 1);
+}
+
+// USER INTERFACE HELPERS
+
+function re_run() {
+    POINTS_PER_RUN *= 0.5;
+    POINTS = [];
+    clearTimeout(RUNNING);
+    RUNNING = setTimeout(run, 1);
+}
+function zoom_in() {
+    SCALE *= 0.9;
+    re_run();
+}
+function zoom_out() {
+    SCALE *= 1.1;
+    if (SCALE > 1)
+        SCALE = 1;
+    else
+        re_run();
+}
+function to_png() {
+    window.open(C.toDataURL('image/png'));
+}
+
+// USER INTERFACE EVENT HANDLERS
+
+// zoom
+C.onmousewheel = function(event) {
+    var mousex = event.clientX - C.offsetLeft;
+    var mousey = event.clientY - C.offsetTop;
+    var wheel;
+    if ('wheelDelta' in event) {
+        wheel = event.wheelDelta;
+    } else { 
+        wheel = -40 * event.detail; // FF
+    }
+    if (wheel > 0) zoom_in();
+    else           zoom_out();
+}
+C.addEventListener ("DOMMouseScroll", C.onmousewheel, false); // for FF
+
+// drag
+var DRAG = false;
+var DRAG_START_X;
+var DRAG_START_Y;
+function mouse_move(event) {
+    if (DRAG){
+        var x = event.pageX - C.offsetLeft;
+        var y = event.pageY - C.offsetTop;
+        // move image data
+        CTX.putImageData(CTX.getImageData(0, 0, W, H),
+                         (x-DRAG_START_X),
+                         (y-DRAG_START_Y));
+        // change offsets but don't re-render
+        clearTimeout(RUNNING);
+        X_OFF += scale_x(x) - scale_x(DRAG_START_X);
+        Y_OFF += scale_y(y) - scale_y(DRAG_START_Y);
+        // set new start
+        DRAG_START_X = event.pageX - C.offsetLeft;
+        DRAG_START_Y = event.pageY - C.offsetTop;
+    }
+}
+C.onmousedown = function(event) {
+    DRAG_START_X = event.pageX - C.offsetLeft;
+    DRAG_START_Y = event.pageY - C.offsetTop;
+    DRAG = true;
+    C.onmousemove = mouse_move;
+}
+C.onmouseup = function() {
+    DRAG = false;
+    C.onmousemove = null;
+    // re-render at new location
+    re_run();
+}
+
+// changing limit
+el('limit').onkeydown = re_run;
+
+// INVOCATION
+
+clear();
+setTimeout(run, 1);
+
+</script>
+</body>
+</html>
+
