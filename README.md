@@ -11,6 +11,9 @@ License
 
 Public domain (Creative Commons CC0)
 
+(Note that this does *not* include the voronoi library sub-module,
+ which comes with its own license!)
+
 Author
 ------
 
